@@ -218,6 +218,7 @@ class VmUpdatesMixin(object):
         self.loop.run_until_complete(self.testvm1.start())
         self.assertRunCommandReturnCode(self.testvm1,
             self.update_cmd, self.exit_code_ok)
+        self.assertTrue(False, "foo")
 
     def create_repo_apt(self, version=0):
         '''
