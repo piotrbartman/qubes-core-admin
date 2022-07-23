@@ -217,6 +217,7 @@ class VmUpdatesMixin(object):
         self.app.save()
         self.testvm1 = self.app.domains[self.testvm1.qid]
         self.loop.run_until_complete(self.testvm1.start())
+        print(self.update_cmd, self.exit_code_ok, self.testvm1)
         self.assertRunCommandReturnCode(self.testvm1,
             self.update_cmd, self.exit_code_ok)
 
