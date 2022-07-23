@@ -19,8 +19,13 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, see <https://www.gnu.org/licenses/>.
 #
+import asyncio
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
+
 import qubes.vm
 
 # noinspection PyAttributeOutsideInit,PyPep8Naming
@@ -145,21 +150,6 @@ class VmUpdatesMixin(object):
         b"C5nyBG9qjr08E59KY1vUTGRg7mRsCGBimFa+3sTPg7WYCSTBGRgEAzEOeH04EAAA="
     )]
 
-    def run_cmd(self, vm, cmd, user="root"):
-        '''Run a command *cmd* in a *vm* as *user*. Return its exit code.
-
-        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
-        :param qubes.vm.qubesvm.QubesVM vm: VM object to run command in
-        :param str cmd: command to execute
-        :param std user: user to execute command as
-        :return int: command exit code
-        '''
-        try:
-            self.loop.run_until_complete(vm.run_for_stdio(cmd))
-        except subprocess.CalledProcessError as e:
-            return e.returncode
-        return 0
-
     def assertRunCommandReturnCode(self, vm, cmd, expected_returncode):
         p = self.loop.run_until_complete(
             vm.run(cmd, user='root',
@@ -210,16 +200,213 @@ class VmUpdatesMixin(object):
             label='red')
         self.loop.run_until_complete(self.testvm1.create_on_disk())
 
-    def test_000_simple_update(self):
+    @classmethod
+    def setUpClass(cls):
+        super(VmUpdatesMixin, cls).setUpClass()
+
+        cls.tmpdir = tempfile.mkdtemp()
+
+#         with open('/etc/yum.repos.d/test.repo', 'w') as repo_file:
+#             repo_file.write('''
+# [test]
+# name = Test
+# baseurl = http://localhost:8080/
+# enabled = 1
+# ''')
+
+    @classmethod
+    def tearDownClass(cls):
+        # os.unlink('/etc/yum.repos.d/test.repo')
+
+        shutil.rmtree(cls.tmpdir)
+
+    def create_repo_apt(self, version=0):
         '''
         :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
         '''
+        pkg_file_name = "test-pkg_1.{}-1_amd64.deb".format(version)
+        self.loop.run_until_complete(self.netvm_repo.run_for_stdio('''
+            mkdir -p /tmp/apt-repo \
+            && cd /tmp/apt-repo \
+            && base64 -d | zcat > {}
+            '''.format(pkg_file_name),
+           input=
+           self.DEB_PACKAGE_GZIP_BASE64[
+               version]))
+        # do not assume dpkg-scanpackage installed
+        packages_path = "dists/test/main/binary-amd64/Packages"
+        self.loop.run_until_complete(self.netvm_repo.run_for_stdio('''
+            mkdir -p /tmp/apt-repo/dists/test/main/binary-amd64 \
+            && cd /tmp/apt-repo \
+            && cat > {packages} \
+            && echo MD5sum: $(openssl md5 -r {pkg} | cut -f 1 -d ' ') \
+                >> {packages} \
+            && echo SHA1: $(openssl sha1 -r {pkg} | cut -f 1 -d ' ') \
+                >> {packages} \
+            && echo SHA256: $(openssl sha256 -r {pkg} | cut -f 1 -d ' ') \
+                >> {packages} \
+            && sed -i -e "s,@SIZE@,$(stat -c %s {pkg})," {packages} \
+            && gzip < {packages} > {packages}.gz
+            '''.format(pkg=pkg_file_name, packages=packages_path),
+            input='''\
+Package: test-pkg
+Version: 1.{version}-1
+Architecture: amd64
+Maintainer: unknown <user@host>
+Installed-Size: 25
+Filename: {pkg}
+Size: @SIZE@
+Section: unknown
+Priority: optional
+Description: Test package'''.format(pkg=pkg_file_name,
+                                    version=version).encode(
+                                                                       'utf-8')))
+
+        self.loop.run_until_complete(self.netvm_repo.run_for_stdio('''
+            mkdir -p /tmp/apt-repo/dists/test \
+            && cd /tmp/apt-repo/dists/test \
+            && cat > Release \
+            && echo '' $(sha256sum {p} | cut -f 1 -d ' ') $(stat -c %s {p}) {p}\
+                >> Release \
+            && echo '' $(sha256sum {z} | cut -f 1 -d ' ') $(stat -c %s {z}) {z}\
+                >> Release
+            '''.format(p='main/binary-amd64/Packages',
+                       z='main/binary-amd64/Packages.gz'),
+                                                                   input=b'''\
+Label: Test repo
+Suite: test
+Codename: test
+Date: Tue, 27 Oct 2015 03:22:09 UTC
+Architectures: amd64
+Components: main
+SHA256:
+'''))
+
+    def create_repo_yum(self, version=0):
+        '''
+        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
+        '''
+        pkg_file_name = "test-pkg-1.{}-1.fc21.x86_64.rpm".format(version)
+        self.loop.run_until_complete(self.netvm_repo.run_for_stdio('''
+            mkdir -p /tmp/yum-repo \
+            && cd /tmp/yum-repo \
+            && base64 -d | zcat > {}
+            '''.format(pkg_file_name), input=self.RPM_PACKAGE_GZIP_BASE64[
+            version]))
+
+        # createrepo is installed by default in Fedora template
+        self.loop.run_until_complete(self.netvm_repo.run_for_stdio(
+            'createrepo_c /tmp/yum-repo'))
+
+    def create_repo_and_serve(self):
+        '''
+        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
+        '''
+        if self.template.count("debian") or self.template.count("whonix"):
+            self.create_repo_apt()
+            self.loop.run_until_complete(self.netvm_repo.run(
+                'cd /tmp/apt-repo && python3 -m http.server 8080',
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        elif self.template.count("fedora"):
+            self.create_repo_yum()
+            self.loop.run_until_complete(self.netvm_repo.run(
+                'cd /tmp/yum-repo && python3 -m http.server 8080',
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        else:
+            # not reachable...
+            self.skipTest("Template {} not supported by this test".format(
+                self.template))
+
+    pkg_name = 'qubes-test-pkg-vm'
+
+    def configure_test_repo(self):
+        """
+        Configure test repository in test-vm and disable rest of them.
+        The critical part is to use "localhost" - this will work only when
+        accessed through update proxy and this is exactly what we want to
+        test here.
+
+        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
+        """
+
+        if self.template.count("debian") or self.template.count("whonix"):
+            self.loop.run_until_complete(self.testvm1.run_for_stdio(
+                "rm -f /etc/apt/sources.list.d/* &&"
+                "echo 'deb [trusted=yes] http://localhost:8080 test main' "
+                "> /etc/apt/sources.list",
+                user="root"))
+        elif self.template.count("fedora"):
+            self.loop.run_until_complete(self.testvm1.run_for_stdio(
+                "rm -f /etc/yum.repos.d/*.repo &&"
+                "echo '[test]' > /etc/yum.repos.d/test.repo &&"
+                "echo 'name=Test repo' >> /etc/yum.repos.d/test.repo &&"
+                "echo 'gpgcheck=0' >> /etc/yum.repos.d/test.repo &&"
+                "echo 'baseurl=http://localhost:8080/'"
+                " >> /etc/yum.repos.d/test.repo",
+                user="root"
+            ))
+        else:
+            # not reachable...
+            self.skipTest("Template {} not supported by this test".format(
+                self.template))
+
+    def add_update_to_repo(self):
+        if self.template.count("debian") or self.template.count("whonix"):
+            self.create_repo_apt(1)
+        elif self.template.count("fedora"):
+            self.create_repo_yum(1)
+
+    def test_000_simple_update(self):
+        """
+        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
+        """
+        if self.template.count("minimal"):
+            self.skipTest("Template {} not supported by this test".format(
+                self.template))
+
+        self.netvm_repo = self.app.add_new_vm(
+            qubes.vm.appvm.AppVM,
+            name=self.make_vm_name('net'),
+            label='red')
+        self.netvm_repo.provides_network = True
+        self.loop.run_until_complete(self.netvm_repo.create_on_disk())
+        self.testvm1.netvm = self.netvm_repo
+        self.netvm_repo.features['service.qubes-updates-proxy'] = True
+        # TODO: consider also adding a test for the template itself
+        self.testvm1.features['service.updates-proxy-setup'] = True
         self.app.save()
-        self.testvm1 = self.app.domains[self.testvm1.qid]
+
+        # Setup test repo
+        self.loop.run_until_complete(self.netvm_repo.start())
+        self.create_repo_and_serve()
+
+        # Configure local repo
         self.loop.run_until_complete(self.testvm1.start())
-        self.assertRunCommandReturnCode(self.testvm1,
-            self.update_cmd, self.exit_code_ok)
-        self.assertTrue(False, f"{self.update_cmd}\n {self.exit_code_ok}\n{self.testvm1}")
+        self.configure_test_repo()
+
+        # self.app.domains[self.testvm1.qid].features['updates-available'] = True
+
+        with self.qrexec_policy('qubes.UpdatesProxy', self.testvm1,
+                '$default', action='allow,target=' + self.netvm_repo.name):
+
+            # install test package
+            self.assertRunCommandReturnCode(
+                self.testvm1, self.install_cmd.format('test-pkg'),
+                self.exit_code_ok)
+            self.add_update_to_repo()
+
+            logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
+            with open(logpath, 'w') as f_log:
+                proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+                    'qubes-vm-update', "--targets", self.testvm1.name,
+                    stdout=f_log,
+                    stderr=subprocess.STDOUT))
+            self.loop.run_until_complete(proc.wait())
+            if proc.returncode:
+                del proc
+                with open(logpath) as f_log:
+                    self.fail("qubes-vm-update failed: " + f_log.read())
+            del proc
 
 
 def create_testcases_for_templates():

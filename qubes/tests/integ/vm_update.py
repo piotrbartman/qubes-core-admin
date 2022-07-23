@@ -18,8 +18,13 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, see <https://www.gnu.org/licenses/>.
 #
+import asyncio
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
+
 import qubes.vm
 
 # noinspection PyAttributeOutsideInit,PyPep8Naming
@@ -144,6 +149,15 @@ class VmUpdatesMixin(object):
         b"C5nyBG9qjr08E59KY1vUTGRg7mRsCGBimFa+3sTPg7WYCSTBGRgEAzEOeH04EAAA="
     )]
 
+    @classmethod
+    def setUpClass(cls):
+        super(VmUpdatesMixin, cls).setUpClass()
+        cls.tmpdir = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmpdir)
+
     def run_cmd(self, vm, cmd, user="root"):
         '''Run a command *cmd* in a *vm* as *user*. Return its exit code.
 
@@ -180,8 +194,7 @@ class VmUpdatesMixin(object):
 
         self.update_cmd = None
         if self.template.count("debian"):
-            self.update_cmd = "set -o pipefail; apt-get update 2>&1 | " \
-                              "{ ! grep '^W:\|^E:'; }"
+            self.update_cmd = "bash -c \"set -o pipefail; apt-get update 2>&1 | { ! grep '^W:\|^E:'; }\""
             self.upgrade_cmd = "apt-get -V dist-upgrade -y"
             self.install_cmd = "apt-get install -y {}"
             self.install_test_cmd = "dpkg -l {}"
@@ -446,6 +459,56 @@ SHA256:
             self.testvm1, self.upgrade_cmd, self.exit_code_ok)
 
         self.assertFalse(self.testvm1.features.get('updates-available', False))
+
+    def test_100_qubes_vm_update(self):
+        """
+        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
+        """
+        if self.template.count("minimal"):
+            self.skipTest("Template {} not supported by this test".format(
+                self.template))
+
+        self.netvm_repo = self.app.add_new_vm(
+            qubes.vm.appvm.AppVM,
+            name=self.make_vm_name('net'),
+            label='red')
+        self.netvm_repo.provides_network = True
+        self.loop.run_until_complete(self.netvm_repo.create_on_disk())
+        self.testvm1.netvm = self.netvm_repo
+        self.netvm_repo.features['service.qubes-updates-proxy'] = True
+        # TODO: consider also adding a test for the template itself
+        self.testvm1.features['service.updates-proxy-setup'] = True
+        self.app.save()
+
+        # Setup test repo
+        self.loop.run_until_complete(self.netvm_repo.start())
+        self.create_repo_and_serve()
+
+        # Configure local repo
+        self.loop.run_until_complete(self.testvm1.start())
+        self.configure_test_repo()
+
+        with self.qrexec_policy('qubes.UpdatesProxy', self.testvm1,
+                '$default', action='allow,target=' + self.netvm_repo.name):
+
+            # install test package
+            self.assertRunCommandReturnCode(
+                self.testvm1, self.install_cmd.format('test-pkg'),
+                self.exit_code_ok)
+            self.add_update_to_repo()
+
+            logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
+            with open(logpath, 'w') as f_log:
+                proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+                    'qubes-vm-update', "--targets", self.testvm1.name,
+                    stdout=f_log,
+                    stderr=subprocess.STDOUT))
+            self.loop.run_until_complete(proc.wait())
+            if proc.returncode:
+                del proc
+                with open(logpath) as f_log:
+                    self.fail("qubes-vm-update failed: " + f_log.read())
+            del proc
 
 def create_testcases_for_templates():
     yield from qubes.tests.create_testcases_for_templates('VmUpdates',
