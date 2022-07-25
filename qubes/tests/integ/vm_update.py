@@ -194,9 +194,8 @@ class VmUpdatesMixin(object):
 
         self.update_cmd = None
         if self.template.count("debian"):
-            self.update_cmd = "bash\n" \
-                              "set -o pipefail; apt-get update 2>&1 | " \
-                              "{ ! grep '^W:\|^E:'; }"
+            self.update_cmd = "set -o pipefail; apt-get update 2>&1 | " \
+                              r"{ ! grep '^W:\|^E:'; }"
             self.upgrade_cmd = "apt-get -V dist-upgrade -y"
             self.install_cmd = "apt-get install -y {}"
             self.install_test_cmd = "dpkg -l {}"
@@ -493,10 +492,15 @@ SHA256:
         with self.qrexec_policy('qubes.UpdatesProxy', self.testvm1,
                 '$default', action='allow,target=' + self.netvm_repo.name):
 
+            # update repository metadata
+            self.assertRunCommandReturnCode(
+                self.testvm1, self.update_cmd, self.exit_code_ok)
+
             # install test package
             self.assertRunCommandReturnCode(
                 self.testvm1, self.install_cmd.format('test-pkg'),
                 self.exit_code_ok)
+
             self.add_update_to_repo()
 
             logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
