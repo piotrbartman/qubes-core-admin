@@ -461,7 +461,7 @@ SHA256:
 
         self.assertFalse(self.testvm1.features.get('updates-available', False))
 
-    def test_100_qubes_vm_update(self):
+    def test_110_qubes_vm_update(self):
         """
         :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
         """
@@ -503,6 +503,11 @@ SHA256:
 
             self.add_update_to_repo()
 
+            # Configure local repo
+            self.loop.run_until_complete(self.testvm1.shutdown())
+            self.testvm1.netvm = None
+            self.loop.run_until_complete(self.testvm1.start())
+
             logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
             with open(logpath, 'w') as f_log:
                 proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
@@ -515,6 +520,68 @@ SHA256:
                 with open(logpath) as f_log:
                     self.fail("qubes-vm-update failed: " + f_log.read())
             del proc
+
+    def test_120_updates_available_notification(self):
+        # override with StandaloneVM
+        self.testvm1 = self.app.add_new_vm(
+            qubes.vm.standalonevm.StandaloneVM,
+            name=self.make_vm_name('vm2'),
+            label='red')
+        tpl = self.app.domains[self.template]
+        self.testvm1.clone_properties(tpl)
+        self.testvm1.features.update(tpl.features)
+        self.loop.run_until_complete(
+            self.testvm1.clone_disk_files(tpl))
+        self.loop.run_until_complete(self.testvm1.start())
+        self.netvm_repo = self.testvm1
+
+        self.create_repo_and_serve()
+        self.configure_test_repo()
+
+        self.loop.run_until_complete(
+            self.testvm1.run_for_stdio(
+                '/usr/lib/qubes/upgrades-status-notify',
+                user='root',
+            ))
+        self.assertFalse(self.testvm1.features.get('updates-available', False))
+
+        # update repository metadata
+        self.assertRunCommandReturnCode(
+            self.testvm1, self.update_cmd, self.exit_code_ok)
+
+        # install test package
+        self.assertRunCommandReturnCode(
+            self.testvm1, self.install_cmd.format('test-pkg'), self.exit_code_ok)
+
+        self.assertFalse(self.testvm1.features.get('updates-available', False))
+
+        self.add_update_to_repo()
+        # update repository metadata
+        self.assertRunCommandReturnCode(
+            self.testvm1, self.update_cmd, self.exit_code_ok)
+
+        self.loop.run_until_complete(
+            self.testvm1.run_for_stdio(
+                '/usr/lib/qubes/upgrades-status-notify',
+                user='root',
+            ))
+        self.assertTrue(self.testvm1.features.get('updates-available', False))
+
+        logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
+        with open(logpath, 'w') as f_log:
+            proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+                'qubes-vm-update', "--targets", self.testvm1.name,
+                stdout=f_log,
+                stderr=subprocess.STDOUT))
+        self.loop.run_until_complete(proc.wait())
+        if proc.returncode:
+            del proc
+            with open(logpath) as f_log:
+                self.fail("qubes-vm-update failed: " + f_log.read())
+        del proc
+
+        self.assertFalse(self.testvm1.features.get('updates-available', False))
+
 
 def create_testcases_for_templates():
     yield from qubes.tests.create_testcases_for_templates('VmUpdates',
