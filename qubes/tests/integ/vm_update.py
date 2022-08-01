@@ -477,7 +477,6 @@ SHA256:
         self.loop.run_until_complete(self.netvm_repo.create_on_disk())
         self.testvm1.netvm = self.netvm_repo
         self.netvm_repo.features['service.qubes-updates-proxy'] = True
-        # TODO: consider also adding a test for the template itself
         self.testvm1.features['service.updates-proxy-setup'] = True
         self.app.save()
 
@@ -502,11 +501,6 @@ SHA256:
                 self.exit_code_ok)
 
             self.add_update_to_repo()
-
-            # TODO test fail
-            # self.loop.run_until_complete(self.testvm1.shutdown())
-            # self.testvm1.netvm = None
-            # self.loop.run_until_complete(self.testvm1.start())
 
             logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
             with open(logpath, 'w') as f_log:
@@ -581,6 +575,66 @@ SHA256:
         del proc
 
         self.assertFalse(self.testvm1.features.get('updates-available', False))
+
+
+    def test_130_qubes_vm_update_no_network(self):
+        """
+        :type self: qubes.tests.SystemTestCase | VmUpdatesMixin
+        """
+        if self.template.count("minimal"):
+            self.skipTest("Template {} not supported by this test".format(
+                self.template))
+
+        self.netvm_repo = self.app.add_new_vm(
+            qubes.vm.appvm.AppVM,
+            name=self.make_vm_name('net'),
+            label='red')
+        self.netvm_repo.provides_network = True
+        self.loop.run_until_complete(self.netvm_repo.create_on_disk())
+        self.testvm1.netvm = self.netvm_repo
+        self.netvm_repo.features['service.qubes-updates-proxy'] = True
+        self.testvm1.features['service.updates-proxy-setup'] = True
+        self.app.save()
+
+        # Setup test repo
+        self.loop.run_until_complete(self.netvm_repo.start())
+        self.create_repo_and_serve()
+
+        # Configure local repo
+        self.loop.run_until_complete(self.testvm1.start())
+        self.configure_test_repo()
+
+        with self.qrexec_policy('qubes.UpdatesProxy', self.testvm1,
+                '$default', action='allow,target=' + self.netvm_repo.name):
+
+            # update repository metadata
+            self.assertRunCommandReturnCode(
+                self.testvm1, self.update_cmd, self.exit_code_ok)
+
+            # install test package
+            self.assertRunCommandReturnCode(
+                self.testvm1, self.install_cmd.format('test-pkg'),
+                self.exit_code_ok)
+
+            self.add_update_to_repo()
+
+            # TODO test fail
+            self.loop.run_until_complete(self.testvm1.shutdown())
+            self.testvm1.netvm = None
+            self.loop.run_until_complete(self.testvm1.start())
+
+            logpath = os.path.join(self.tmpdir, 'vm-update-output.txt')
+            with open(logpath, 'w') as f_log:
+                proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+                    'qubes-vm-update', "--targets", self.testvm1.name,
+                    stdout=f_log,
+                    stderr=subprocess.STDOUT))
+            self.loop.run_until_complete(proc.wait())
+            if not proc.returncode:
+                del proc
+                with open(logpath) as f_log:
+                    self.fail("qubes-vm-update failed: " + f_log.read())
+            del proc
 
 
 def create_testcases_for_templates():
