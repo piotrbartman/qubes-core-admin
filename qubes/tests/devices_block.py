@@ -419,7 +419,33 @@ class TC_00_Block(qubes.tests.QubesTestCase):
         self.assertEqual(device_info.size, 0)
         vm.log.warning.assert_called_once_with("Device sda has invalid size")
 
-    def test_010_devices_list(self):
+    def _parent_of(self, parent, parent_devclass):
+        vm = TestVM(
+            {
+                "/qubes-block-devices/sda": b"",
+                "/qubes-block-devices/sda/desc": b"Test device",
+                "/qubes-block-devices/sda/parent": parent,
+                "/qubes-block-devices/sda/parent_devclass": parent_devclass,
+            }
+        )
+        for devclass in ("block", "usb"):
+            vm.devices[devclass]._exposed.append(
+                DeviceInfo(Port(vm, parent.decode(), devclass=devclass))
+            )
+        return self.ext.device_get(vm, "sda").parent_device
+
+    def test_010_parent_devclass_from_backend(self):
+        parent = self._parent_of(b"1-1", b"block")
+        self.assertEqual(parent.devclass, "block")
+        self.assertEqual(parent.port_id, "1-1")
+
+    def test_011_parent_devclass_invalid(self):
+        parent = self._parent_of(b"1-1", b"pci")
+        self.assertEqual(parent.devclass, "usb")
+        parent = self._parent_of(b"sdb", b"")
+        self.assertEqual(parent.devclass, "block")
+
+    def test_012_devices_list(self):
         vm = TestVM(
             {
                 "/qubes-block-devices/sda": b"",
@@ -447,12 +473,12 @@ class TC_00_Block(qubes.tests.QubesTestCase):
         self.assertEqual(devices[1].size, 2048000)
         self.assertEqual(devices[1].mode, "r")
 
-    def test_011_devices_list_empty(self):
+    def test_013_devices_list_empty(self):
         vm = TestVM({})
         devices = sorted(list(self.ext.on_device_list_block(vm, "")))
         self.assertEqual(len(devices), 0)
 
-    def test_012_devices_list_invalid_ident(self):
+    def test_014_devices_list_invalid_ident(self):
         vm = TestVM(
             {
                 "/qubes-block-devices/invalid port_id": b"",

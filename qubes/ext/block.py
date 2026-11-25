@@ -60,6 +60,8 @@ class BlockDevice(qubes.device_protocol.DeviceInfo):
         }
     )
     FORCE_SUPPORTED = True
+    # Device classes a block device can be a child of
+    PARENT_CLASSES = ("block", "usb")
 
     def __init__(
         self, port: qubes.device_protocol.Port, exported: Optional[bool] = None
@@ -229,10 +231,13 @@ class BlockDevice(qubes.device_protocol.DeviceInfo):
             parent_ident, sep, interface_num = self._sanitize(
                 untrusted_parent_info
             ).partition(":")
-            if sep == ":" or re.match(r"^\d+-", parent_ident):
-                devclass = "usb"
-            else:
-                devclass = "block"
+            devclass = self._parent_devclass()
+            if devclass is None:
+                # old backend, best effort
+                if sep == ":" or re.match(r"^\d+-", parent_ident):
+                    devclass = "usb"
+                else:
+                    devclass = "block"
             if not parent_ident:
                 return None
             try:
@@ -345,6 +350,22 @@ class BlockDevice(qubes.device_protocol.DeviceInfo):
         # partition number: 'xxxxx12' -> '12' (partition)
         numbers = re.findall(r"\d+$", self.port_id)
         return int(numbers[-1]) if numbers else None
+
+    def _parent_devclass(self) -> Optional[str]:
+        untrusted_devclass = self.backend_domain.untrusted_qdb.read(
+            f"/qubes-block-devices/{self.port_id}/parent_devclass"
+        )
+        if not untrusted_devclass:
+            return None
+        untrusted_devclass = untrusted_devclass.decode(
+            "ascii", errors="replace"
+        )
+        if untrusted_devclass not in self.PARENT_CLASSES:
+            self.backend_domain.log.warning(
+                "Device %s has invalid parent device class", self.port_id
+            )
+            return None
+        return untrusted_devclass
 
     @staticmethod
     def _sanitize(
