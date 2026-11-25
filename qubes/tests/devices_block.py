@@ -1854,7 +1854,7 @@ class TC_00_Block(qubes.tests.QubesTestCase):
         back, front, _other, disk, _part = self._two_starting()
         back.devices["block"].reserve(disk.port_id, front)
         self.assertEqual(
-            back.devices["block"].get_exposed_attachments(), {"sda": front}
+            back.devices["block"].get_exposed_attachments(), {"sda": [front]}
         )
 
     def test_145_force_attach_refused_while_reserved(self):
@@ -1884,3 +1884,30 @@ class TC_00_Block(qubes.tests.QubesTestCase):
         self.assertEqual(front._device_reservations, [])
 
         check_and_reserve(other, "block", disk, assignment)
+
+    def test_147_shared_class_is_not_reserved(self):
+        _back, front, other, disk, _part = self._two_starting()
+        for vm in (front, other):
+            vm._device_reservations = []
+            vm.fire_event = functools.partial(
+                self.ext.on_device_check_available_block, vm
+            )
+        check_and_reserve = qubes.vm.qubesvm.QubesVM._check_and_reserve
+        assignment = DeviceAssignment(disk, mode="required")
+
+        with mock.patch.object(qubes.ext.block.BlockDevice, "EXCLUSIVE", False):
+            check_and_reserve(front, "block", disk, assignment)
+            self.assertEqual(front._device_reservations, [])
+            # no exception
+            check_and_reserve(other, "block", disk, assignment)
+
+    def test_148_shared_device_lists_every_frontend(self):
+        back, front, other, disk, _part = self._two_starting()
+        for vm in (front, other):
+            vm.devices["block"]._attached.append(
+                DeviceAssignment(disk, mode="manual")
+            )
+        self.assertEqual(
+            back.devices["block"].get_exposed_attachments(),
+            {"sda": [front, other]},
+        )

@@ -5533,10 +5533,13 @@ running and private volume snapshots are disabled. Backup will fail!\n"
             parsed[name] = rest
         self.assertIn("pci", parsed)
         self.assertIn("block", parsed)
-        self.assertEqual(parsed["pci"], "assignment_modes=required")
+        self.assertEqual(
+            parsed["pci"], "assignment_modes=required exclusive=True"
+        )
         self.assertEqual(
             parsed["block"],
-            "assignment_modes=ask-to-attach,auto-attach,manual,required",
+            "assignment_modes=ask-to-attach,auto-attach,manual,required"
+            " exclusive=True",
         )
 
     def test_912_deviceclass_list_bad_argument(self):

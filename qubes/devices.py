@@ -215,8 +215,9 @@ class DeviceCollection:
             Asks whether a device is free to be attached.
 
             Fired for `required` assignment while the qube is starting;
-            raising refuses the start. Right after it, the device is
-            reserved for the qube (:py:meth:`DeviceCollection.reserve`).
+            raising refuses the start. Right after it, the device of an
+            exclusive class is reserved for the qube
+            (:py:meth:`DeviceCollection.reserve`).
 
             Handler for this event must be synchronous: nothing may await
             between the check and the reservation.
@@ -583,14 +584,16 @@ class DeviceCollection:
         if self._reserved.get(port_id) == vm:
             del self._reserved[port_id]
 
-    def get_exposed_attachments(self) -> Dict[str, Any]:
+    def get_exposed_attachments(self) -> Dict[str, List[Any]]:
         """
         Returns map of exposed devices attached to their frontend VMs.
 
         Includes devices reserved for starting qubes.
         It asks every domain; for repeating calls use :py:class:`Attachments`.
         """
-        result: Dict[str, Any] = dict(self._reserved)
+        result: Dict[str, List[Any]] = {
+            port_id: [vm] for port_id, vm in self._reserved.items()
+        }
         app = getattr(self._vm, "app", None)
         if app is not None:
             for vm in app.domains:
@@ -601,8 +604,11 @@ class DeviceCollection:
                 except LookupError:
                     continue
                 for assignment in assignments:
-                    if assignment.backend_domain == self._vm:
-                        result[assignment.port.port_id] = vm
+                    if assignment.backend_domain != self._vm:
+                        continue
+                    frontends = result.setdefault(assignment.port.port_id, [])
+                    if vm not in frontends:
+                        frontends.append(vm)
 
         return result
 
@@ -734,44 +740,44 @@ class Attachments:
 
     def __init__(self, manager: DeviceManager):
         self._manager = manager
-        self._bus_cache: Dict[str, Dict[str, Any]] = {}
+        self._bus_cache: Dict[str, Dict[str, List[Any]]] = {}
 
-    def _bus(self, devclass: str) -> Dict[str, Any]:
+    def _bus(self, devclass: str) -> Dict[str, List[Any]]:
         if devclass not in self._bus_cache:
             self._bus_cache[devclass] = self._manager[
                 devclass
             ].get_exposed_attachments()
         return self._bus_cache[devclass]
 
-    def frontend(self, port) -> Optional[Any]:
+    def frontends(self, port) -> List[Any]:
         """
-        The frontend domain *port* is attached to, if any.
+        The frontend domains *port* is attached to.
         """
-        return self._bus(port.devclass).get(port.port_id)
+        return self._bus(port.devclass).get(port.port_id, [])
 
-    def attached_subdevice(self, device) -> Optional[Tuple[Any, Any]]:
+    def attached_subdevice(self, device) -> Optional[Tuple[Any, List[Any]]]:
         """
-        A subdevice of *device* that is attached to a VM, and that VM.
+        A subdevice of *device* that is attached to a VM, and its frontends.
 
         Stops at the first one found; the caller has to free it itself.
         """
         for subdevice in all_subdevices(device):
-            frontend = self.frontend(subdevice.port)
-            if frontend is not None:
-                return subdevice, frontend
+            frontends = self.frontends(subdevice.port)
+            if frontends:
+                return subdevice, frontends
         return None
 
-    def attached_ancestor(self, device) -> Optional[Tuple[Any, Any]]:
+    def attached_ancestor(self, device) -> Optional[Tuple[Any, List[Any]]]:
         """
-        An ancestor of *device* that is attached to a VM, and that VM.
+        An ancestor of *device* that is attached to a VM, and its frontends.
 
         A backend hides the partitions of an exported disk, but not of reserved
         ones.
         """
         for ancestor in ancestors(device):
-            frontend = self.frontend(ancestor.port)
-            if frontend is not None:
-                return ancestor, frontend
+            frontends = self.frontends(ancestor.port)
+            if frontends:
+                return ancestor, frontends
         return None
 
 

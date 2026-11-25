@@ -1834,7 +1834,8 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
         ``admin.deviceclass.List+details`` returns the same list, but
         each line additionally carries space-separated ``key=value`` metadata.
-        Currently, it's: <class> assignment_modes=<mode>[,<mode>...]
+        Currently, it's:
+        <class> assignment_modes=<mode>[,<mode>...] exclusive=<True|False>
         The ``key=value`` format allows further properties to be added.
         """
         self.enforce_arg(
@@ -1853,6 +1854,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         lines = []
         for entry_point in entrypoints:
             modes = ""
+            exclusive = ""
             try:
                 device_info = entry_point.load()
                 modes = ",".join(
@@ -1861,6 +1863,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
                         for mode in device_info.SUPPORTED_ASSIGNMENT_MODES
                     )
                 )
+                exclusive = str(bool(device_info.EXCLUSIVE))
             except Exception:  # pylint: disable=broad-exception-caught
                 # a class that fails to load or does not expose the metadata
                 # is still listed, just without the extra properties
@@ -1870,7 +1873,10 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
                     exc_info=True,
                 )
             if modes:
-                lines.append(f"{entry_point.name} assignment_modes={modes}\n")
+                lines.append(
+                    f"{entry_point.name} assignment_modes={modes}"
+                    f" exclusive={exclusive}\n"
+                )
             else:
                 lines.append(f"{entry_point.name}\n")
         return "".join(lines)

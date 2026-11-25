@@ -920,6 +920,10 @@ class DeviceInfo(VirtualDevice):
     SUPPORTED_ASSIGNMENT_MODES: "frozenset[AssignmentMode]" = frozenset(
         {AssignmentMode.MANUAL, AssignmentMode.ASK, AssignmentMode.AUTO}
     )
+    # Can be attached to only one qube at a time: reserved at qube start,
+    # and `--force` detaches it from its holder. Set it to False for
+    # a class meant to be shared, e.g. a network bridge.
+    EXCLUSIVE: bool = True
 
     def __init__(
         self,

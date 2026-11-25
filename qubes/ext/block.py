@@ -568,7 +568,7 @@ class BlockDeviceExtension(qubes.ext.Extension):
         self,
         device,
         attachments,
-        current_attachment,
+        frontends,
         force,
         check_local_usage=True,
     ):
@@ -580,17 +580,17 @@ class BlockDeviceExtension(qubes.ext.Extension):
         `check_local_usage=False` ignores the last one for backward
         compatibility.
         """
-        if current_attachment is None:
+        if not frontends:
             sub_attach = attachments.attached_subdevice(device)
             if sub_attach is not None:
-                subdevice, _frontend = sub_attach
+                subdevice, _frontends = sub_attach
                 raise qubes.exc.DeviceUsed(
                     f"Device {device} cannot be attached: its subdevice "
                     f"{subdevice} is attached to another VM."
                 )
             parent_attach = attachments.attached_ancestor(device)
             if parent_attach is not None:
-                parent, _frontend = parent_attach
+                parent, _frontends = parent_attach
                 raise qubes.exc.DeviceUsed(
                     f"Device {device} cannot be attached: its parent "
                     f"{parent} is attached to another VM."
@@ -625,14 +625,14 @@ class BlockDeviceExtension(qubes.ext.Extension):
                 )
 
     @staticmethod
-    def refuse_already_attached(vm, device, current_attachment):
+    def refuse_already_attached(vm, device, frontends):
         """
         Refuse to hand out a device another qube is holding right now.
         """
-        if not current_attachment:
+        if not frontends:
             return
 
-        if current_attachment == vm:
+        if vm in frontends:
             raise qubes.exc.DeviceAlreadyAttached(
                 f"Device {device} is already attached to this VM ({vm})."
             )
@@ -655,7 +655,7 @@ class BlockDeviceExtension(qubes.ext.Extension):
             return
 
         attachments = device.backend_domain.devices.attachments()
-        current_attachment = attachments.frontend(device.port)
+        frontends = attachments.frontends(device.port)
 
         # With `check_local_usage=False`, even if the backend VM does not have a
         # device watcher, the block device will be taken and attached, which may
@@ -663,11 +663,11 @@ class BlockDeviceExtension(qubes.ext.Extension):
         self.refuse_unavailable(
             device,
             attachments,
-            current_attachment,
+            frontends,
             force=False,
             check_local_usage=False,
         )
-        self.refuse_already_attached(vm, device, current_attachment)
+        self.refuse_already_attached(vm, device, frontends)
 
     def pre_attachment_internal(self, vm, device, options):
         if isinstance(device, qubes.device_protocol.UnknownDevice):
@@ -682,9 +682,9 @@ class BlockDeviceExtension(qubes.ext.Extension):
         force = qubes.property.bool(None, None, options.pop("force", "no"))
 
         attachments = device.backend_domain.devices.attachments()
-        current_attachment = attachments.frontend(device.port)
+        frontends = attachments.frontends(device.port)
 
-        self.refuse_unavailable(device, attachments, current_attachment, force)
+        self.refuse_unavailable(device, attachments, frontends, force)
 
         # validate options
         for option, value in options.items():
@@ -730,7 +730,7 @@ class BlockDeviceExtension(qubes.ext.Extension):
             )
             return
 
-        self.refuse_already_attached(vm, device, current_attachment)
+        self.refuse_already_attached(vm, device, frontends)
 
         if not device.backend_domain.is_running():
             raise qubes.exc.QubesVMNotRunningError(

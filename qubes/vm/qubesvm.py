@@ -1709,6 +1709,9 @@ class QubesVM(qubes.vm.mix.net.NetVMMixin, qubes.vm.LocalVM):
             device=device,
             options=assignment.options,
         )
+        if not device.EXCLUSIVE:
+            # can be shared
+            return
         collection.reserve(device.port_id, self)
         self._device_reservations.append((collection, device.port_id))
 
