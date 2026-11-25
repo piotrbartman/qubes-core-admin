@@ -159,6 +159,7 @@ class PCIDevice(qubes.device_protocol.DeviceInfo):
     )
 
     SUPPORTED_ASSIGNMENT_MODES = frozenset({AssignmentMode.REQUIRED})
+    PARENT_CLASSES = ()
 
     def __init__(self, port: Port, libvirt_name=None):
         if libvirt_name:

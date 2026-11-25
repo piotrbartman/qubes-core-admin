@@ -534,6 +534,53 @@ class TC_01_DeviceManager(qubes.tests.QubesTestCase):
             len(list(self.manager["testclass"].get_assigned_devices())), 1
         )
 
+    def test_002_subdevices_of_class_not_created_yet(self):
+        child = TestDevice(
+            Port(self.emitter, "testport-child", devclass="childclass"),
+            device_id="childdev",
+            parent=self.emitter.device,
+        )
+        self.emitter.add_handler(
+            "device-list:childclass", lambda _vm, _event: [child]
+        )
+        self.emitter.devices = self.manager
+        self.manager["testclass"]  # pylint: disable=pointless-statement
+        with unittest.mock.patch(
+            "qubes.devices._device_classes",
+            return_value={"childclass": None, "testclass": TestDevice},
+        ):
+            self.assertEqual(self.emitter.device.subdevices, [child])
+            self.assertEqual(
+                list(qubes.devices.all_subdevices(self.emitter.device)),
+                [child],
+            )
+        # listing must not create it
+        self.assertNotIn("childclass", self.manager)
+
+    def test_003_classes_that_cannot_be_children_are_not_listed(self):
+        listed = []
+        for devclass in ("leafclass", "otherchildclass"):
+            self.emitter.add_handler(
+                "device-list:" + devclass,
+                lambda _vm, event: listed.append(event) or [],
+            )
+        leaf = type("Leaf", (TestDevice,), {"PARENT_CLASSES": ()})
+        other_child = type(
+            "OtherChild", (TestDevice,), {"PARENT_CLASSES": ("otherclass",)}
+        )
+        self.emitter.devices = self.manager
+        with unittest.mock.patch(
+            "qubes.devices._device_classes",
+            return_value={
+                "leafclass": leaf,
+                "otherchildclass": other_child,
+            },
+        ):
+            self.assertEqual(self.emitter.device.subdevices, [])
+            self.assertEqual(listed, [])
+            list(self.manager.possible_children())
+            self.assertEqual(listed, ["device-list:otherchildclass"])
+
 
 class TC_02_DeviceInfo(qubes.tests.QubesTestCase):
     def setUp(self):

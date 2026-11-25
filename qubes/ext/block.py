@@ -60,7 +60,7 @@ class BlockDevice(qubes.device_protocol.DeviceInfo):
         }
     )
     FORCE_SUPPORTED = True
-    # Device classes a block device can be a child of
+    # a class whose devices expose block devices goes here
     PARENT_CLASSES = ("block", "usb")
 
     def __init__(

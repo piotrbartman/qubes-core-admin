@@ -59,6 +59,8 @@ Extension may use QubesDB watch API (QubesVM.watch_qdb_path(path), then handle
 `device-list-change:class` event.
 """
 
+import functools
+import importlib.metadata
 import itertools
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -114,15 +116,26 @@ def qbool_untrusted_used(untrusted_used, log=None) -> bool:
         return True
 
 
+@functools.cache
+def _device_classes() -> Dict[str, Any]:
+    # extensions do not change durring qubesd running
+    classes: Dict[str, Any] = {}
+    for entry_point in importlib.metadata.entry_points(group="qubes.devices"):
+        try:
+            classes[entry_point.name] = entry_point.load()
+        except Exception:  # pylint: disable=broad-exception-caught
+            classes[entry_point.name] = None
+    return classes
+
+
 def _children_by_parent(backend_domain) -> Dict[Tuple[str, str], List]:
     index: Dict[Tuple[str, str], List] = {}
-    for devclass in list(backend_domain.devices.keys()):
-        for dev in backend_domain.devices[devclass]:
-            parent = dev.parent_device
-            if parent is None:
-                continue
-            key = (parent.port.devclass, parent.port.port_id)
-            index.setdefault(key, []).append(dev)
+    for dev in backend_domain.devices.possible_children():
+        parent = dev.parent_device
+        if parent is None:
+            continue
+        key = (parent.port.devclass, parent.port.port_id)
+        index.setdefault(key, []).append(dev)
     return index
 
 
@@ -685,6 +698,31 @@ class DeviceManager(dict):
         self[key] = DeviceCollection(self._vm, key)
         return self[key]
 
+    def possible_children(
+        self, parent_devclass: Optional[str] = None
+    ) -> Iterable[DeviceInfo]:
+        """
+        Devices exposed by this qube, of every class that can have a parent
+        (of `parent_devclass`, if given).
+        """
+        classes = dict(_device_classes())
+        for devclass in self.keys():
+            classes.setdefault(devclass, collection.devclass)
+        for devclass, cls in sorted(classes.items()):
+            parents = getattr(cls, "PARENT_CLASSES", None)
+            if parents is not None:
+                if parent_devclass is None and not parents:
+                    continue
+                if (
+                    parent_devclass is not None
+                    and parent_devclass not in parents
+                ):
+                    continue
+            if devclass in self:
+                yield from self[devclass]
+            else:
+                yield from self._vm.fire_event("device-list:" + devclass)
+
     def attachments(self) -> "Attachments":
         """
         Lazy snapshot set of all device attachments.
@@ -701,9 +739,9 @@ class DeviceManager(dict):
         Returns ``{devclass: {port_id, ...}}``.  It walks up and down from
         the exported ports of each class in `devclasses`.
 
-        For now, only block devices are included as starting points, as only
-        they can be child devices. *If this changes*, modify the default
-        argument or (better) add a handler that will search all device classes.
+        Only block devices are the starting points by default. It is an
+        optimization: for now only an attached block device makes its
+        relatives busy. Pass other classes in `devclasses` if that changes.
 
         WARNING: Finding a class's attached ports lists that class, and an
         extension lists a class by asking `busy_ports`: that creates a loops

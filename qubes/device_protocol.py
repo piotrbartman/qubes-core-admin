@@ -926,6 +926,9 @@ class DeviceInfo(VirtualDevice):
     EXCLUSIVE: bool = True
     # Is `--force` option supported for this device.
     FORCE_SUPPORTED: bool = False
+    # Device classes a device of this class can be a child of, `()` if none:
+    # `None`: unknown, any.
+    PARENT_CLASSES: Optional[Tuple[str, ...]] = None
 
     def __init__(
         self,
@@ -1096,8 +1099,9 @@ class DeviceInfo(VirtualDevice):
             return []
         return [
             dev
-            for devclass in self.backend_domain.devices.keys()
-            for dev in self.backend_domain.devices[devclass]
+            for dev in self.backend_domain.devices.possible_children(
+                self.devclass
+            )
             if dev.parent_device is not None
             and dev.parent_device.port_id == self.port_id
             and dev.parent_device.devclass == self.devclass
