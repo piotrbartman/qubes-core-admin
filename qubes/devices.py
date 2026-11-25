@@ -200,7 +200,8 @@ class DeviceCollection:
             Handler for this event may be asynchronous.
 
             :param device: :py:class:`DeviceInfo` object to be attached
-            :param options: :py:class:`dict` of attachment options
+            :param options: :py:class:`dict` of attachment options; the
+                ``force`` option only for a class with ``FORCE_SUPPORTED``
 
         .. event:: device-pre-attach:<class> (device)
 
@@ -369,18 +370,31 @@ class DeviceCollection:
                 )
             )
 
-        await self._vm.fire_event_async(
-            "device-pre-attach:" + self._bus,
-            pre_event=True,
-            device=device,
-            options=assignment.options,
-        )
+        options = dict(assignment.options)
+        force_ignored = False
+        if not self.devclass.FORCE_SUPPORTED:
+            force_ignored = qbool(options.pop("force", False))
 
-        await self._vm.fire_event_async(
-            "device-attach:" + self._bus,
-            device=device,
-            options=assignment.options,
-        )
+        try:
+            await self._vm.fire_event_async(
+                "device-pre-attach:" + self._bus,
+                pre_event=True,
+                device=device,
+                options=options,
+            )
+
+            await self._vm.fire_event_async(
+                "device-attach:" + self._bus,
+                device=device,
+                options=options,
+            )
+        except qubes.exc.QubesException as exc:
+            if not force_ignored:
+                raise
+            raise qubes.exc.QubesException(
+                f"{self._bus} devices do not support force, "
+                f"{device} cannot be attached: {exc}"
+            ) from exc
 
     def _validate_mode_supported(self, mode: AssignmentMode):
         if mode in self.supported_assignment_modes:

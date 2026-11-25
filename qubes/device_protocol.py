@@ -924,6 +924,8 @@ class DeviceInfo(VirtualDevice):
     # and `--force` detaches it from its holder. Set it to False for
     # a class meant to be shared, e.g. a network bridge.
     EXCLUSIVE: bool = True
+    # Is `--force` option supported for this device.
+    FORCE_SUPPORTED: bool = False
 
     def __init__(
         self,

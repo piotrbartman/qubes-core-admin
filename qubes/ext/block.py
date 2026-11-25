@@ -59,6 +59,7 @@ class BlockDevice(qubes.device_protocol.DeviceInfo):
             qubes.device_protocol.AssignmentMode.REQUIRED,
         }
     )
+    FORCE_SUPPORTED = True
 
     def __init__(
         self, port: qubes.device_protocol.Port, exported: Optional[bool] = None

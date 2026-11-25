@@ -21,6 +21,8 @@ import sys
 # License along with this library; if not, see <https://www.gnu.org/licenses/>.
 #
 
+import unittest.mock
+
 import qubes.devices
 import qubes.exc
 from qubes.device_protocol import (
@@ -339,6 +341,50 @@ class TC_00_DeviceCollection(qubes.tests.QubesTestCase):
         )
         self.emitter.running = True
         with self.assertRaises(qubes.exc.QubesValueError):
+            self.loop.run_until_complete(
+                self.collection.attach(self.assignment)
+            )
+
+    def _record_attach_options(self):
+        options_seen = []
+        self.emitter.add_handler(
+            "device-pre-attach:testclass",
+            lambda _vm, _event, device, options: options_seen.append(
+                dict(options)
+            ),
+        )
+        return options_seen
+
+    def test_027_attach_force_dropped_if_not_supported(self):
+        self.emitter.running = True
+        options_seen = self._record_attach_options()
+        assignment = self.assignment.clone(options={"force": "yes"})
+        self.loop.run_until_complete(self.collection.attach(assignment))
+        self.assertEqual(options_seen, [{}])
+        self.assertEventFired(self.emitter, "device-attach:testclass")
+
+    def test_028_attach_force_passed_if_supported(self):
+        self.emitter.running = True
+        options_seen = self._record_attach_options()
+        assignment = self.assignment.clone(options={"force": "yes"})
+        with unittest.mock.patch.object(TestDevice, "FORCE_SUPPORTED", True):
+            self.loop.run_until_complete(self.collection.attach(assignment))
+        self.assertEqual(options_seen, [{"force": "yes"}])
+
+    def test_029_attach_force_not_supported_fails(self):
+        self.emitter.running = True
+
+        def refuse(_vm, _event, device, options):
+            raise qubes.exc.DeviceUsed("it is in use")
+
+        self.emitter.add_handler("device-pre-attach:testclass", refuse)
+        assignment = self.assignment.clone(options={"force": "yes"})
+        with self.assertRaisesRegex(
+            qubes.exc.QubesException, "do not support force.*it is in use"
+        ):
+            self.loop.run_until_complete(self.collection.attach(assignment))
+        # without force the error is passed as is
+        with self.assertRaisesRegex(qubes.exc.DeviceUsed, "^it is in use$"):
             self.loop.run_until_complete(
                 self.collection.attach(self.assignment)
             )
